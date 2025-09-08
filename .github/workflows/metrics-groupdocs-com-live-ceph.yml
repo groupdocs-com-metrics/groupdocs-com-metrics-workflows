@@ -1,0 +1,91 @@
+# This is a basic workflow to help you get started with Actions
+
+name: metrics.groupdocs.com-live-ceph
+
+# Controls when the action will run. 
+on:
+  workflow_dispatch:
+  # Scheduled trigger
+  schedule:
+    - cron: '50 */3 * * *'
+  
+    # Triggers the workflow on push or pull request events but only for the master branch
+  #push:
+    #branches: [ live ]
+    # paths:
+    #   - 'content/aspose.com/**'
+    #   - '!images/codeporting/**'
+    #   - '!images/conholdate/**'
+
+  #pull_request:
+  #  branches: [ main ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  #workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Step 1: Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            repository: groupdocs-com-metrics/groupdocs-com-metrics
+            token: ${{ secrets.REPO_TOKEN }}
+            ref: live
+            submodules: true  # Fetch Hugo themes
+            fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
+                              #extended: true (Not being used on QA etc.)
+
+      # Step 2: Set up Node.js to run the fetch script
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+            node-version: '18'  # Use Node.js version 14 (or other versions as needed)
+
+      # Step 3: Install Node.js dependencies
+      - name: Install dependencies
+        run: npm install
+
+      # Step 4: Fetch JSON data and save it to Hugo's data folder
+      - name: Fetch JSON data
+        run: npm run fetch-data
+      
+      # Step 5 - Sets up the latest version of Hugo
+      - name: Setup Hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+            hugo-version: '0.110.0'
+            
+      # Also specifies the theme we want to use
+      - name: Build
+        run: hugo --config "./config/groupdocs-com-live.toml" --minify
+        
+      #- name: Deploy metrics.aspose.com
+      # run: hugo --config "./config/groupdocs-com-live.toml" deploy --target "Production" --invalidateCDN --maxDeletes 256 #-force?
+
+      - name: Sync to Ceph S3
+        run: |
+          aws s3 sync ./public/ s3://metrics-groupdocs-com/ \
+            --endpoint-url https://s3.dynabic.com \
+            --acl public-read \
+            --delete
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CEPH_S3_LIVE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CEPH_S3_LIVE_SECRET_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ENDPOINT_URL: https://s3-admin.dynabic.com
+ 
+      - name: Purge BunnyCDN Cache
+        run: |
+           curl -siG \
+            -H "X-Api-Key: ${{ secrets.BUNNY_API_KEY }}" \
+            --data-urlencode "url=https://metrics-groupdocs-com.s3-website.dynabic.com/" \
+            "https://api.dynabic.com/bn/purge?async=true"
+
